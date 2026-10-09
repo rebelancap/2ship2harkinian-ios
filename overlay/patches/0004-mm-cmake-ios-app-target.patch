@@ -23,10 +23,11 @@ $<TARGET_FILE_DIR> (mm/CMakeLists.txt:501-510), which lands inside the .app.
      enable_language(OBJCXX)
      set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -fobjc-arc")
      set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -fobjc-arc")
-@@ -178,6 +178,107 @@
+@@ -177,6 +177,112 @@
+ # Target
  ################################################################################
  add_executable(${PROJECT_NAME} ${ALL_FILES})
- 
++
 +if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 +    # LUS defines __IOS__ only PRIVATE to itself; 2ship TUs (and LUS headers
 +    # they include) need it too.
@@ -59,6 +60,11 @@ $<TARGET_FILE_DIR> (mm/CMakeLists.txt:501-510), which lands inside the .app.
 +    # autolink does not reliably cover UTType from a plain .m TU.
 +    target_link_libraries(${PROJECT_NAME} PRIVATE "-framework UniformTypeIdentifiers"
 +                                                  "-framework GameController")
++    if(NOT SOH_VISIONOS)
++        # D-052 gyro aiming: CMMotionManager (the shell's CoreMotion block is
++        # compiled out on visionOS). Explicit for the same autolink reason.
++        target_link_libraries(${PROJECT_NAME} PRIVATE "-framework CoreMotion")
++    endif()
 +    # App icon asset catalog (compiled by actool via the Xcode generator):
 +    # iOS single-size AppIcon + visionOS solid image stack, same name.
 +    target_sources(${PROJECT_NAME} PRIVATE "${SOH_IOS_SHELL_DIR}/Assets.xcassets")
@@ -127,14 +133,14 @@ $<TARGET_FILE_DIR> (mm/CMakeLists.txt:501-510), which lands inside the .app.
 +    target_compile_options(${PROJECT_NAME} PRIVATE
 +        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${CMAKE_BINARY_DIR}/ios_cxx_prelude.hpp>")
 +endif()
-+
+ 
  if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
  use_props(${PROJECT_NAME} "${CMAKE_CONFIGURATION_TYPES}" "${DEFAULT_CXX_PROPS}")
- endif()
-@@ -196,6 +297,36 @@
+@@ -195,6 +301,64 @@
+     set_target_properties(${PROJECT_NAME} PROPERTIES
          XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
          OUTPUT_NAME "2s2h-macos"
-     )
++    )
 +elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 +    set(SOH_IOS_BUNDLE_IDENTIFIER "com.harbourmasters.2s2h" CACHE STRING "iOS bundle identifier")
 +    set(SOH_IOS_DEVELOPMENT_TEAM "" CACHE STRING "Development team for iOS code signing")
@@ -142,7 +148,35 @@ $<TARGET_FILE_DIR> (mm/CMakeLists.txt:501-510), which lands inside the .app.
 +    # scenes; visionOS-only (the key changes UIKit scene behavior on iPhone,
 +    # and it must be INSIDE UIApplicationSceneManifest — top-level is
 +    # silently ignored).
-+    set(SOH_PLIST_EXTRA "")
++    # D-053 (reference c8de40b): the iOS 27 SDK HARD-REQUIRES the UIScene life
++    # cycle -- a UIKit app built against it with no scene manifest is killed
++    # by UIKit before main() (SIGTRAP in
++    # ___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption, no log,
++    # no crash.txt). SDL2 predates scenes, so the manifest is declared here and
++    # the shell grafts the app delegate's scene-configuration hook onto
++    # SDLUIKitDelegate at +load: the runtime wants BOTH. The named delegate is
++    # the shell's SohIosSceneDelegate. visionOS overwrites this wholesale below
++    # (its SwiftUI @main owns scenes).
++    set(SOH_PLIST_EXTRA "
++	<key>UIApplicationSceneManifest</key>
++	<dict>
++		<key>UIApplicationSupportsMultipleScenes</key>
++		<false/>
++		<key>UISceneConfigurations</key>
++		<dict>
++			<key>UIWindowSceneSessionRoleApplication</key>
++			<array>
++				<dict>
++					<key>UISceneConfigurationName</key>
++					<string>Default</string>
++					<key>UISceneDelegateClassName</key>
++					<string>SohIosSceneDelegate</string>
++					<key>UISceneClassName</key>
++					<string>UIWindowScene</string>
++				</dict>
++			</array>
++		</dict>
++	</dict>")
 +    if(SOH_VISIONOS)
 +        set(SOH_PLIST_EXTRA "
 +	<key>UIApplicationSceneManifest</key>
@@ -164,11 +198,10 @@ $<TARGET_FILE_DIR> (mm/CMakeLists.txt:501-510), which lands inside the .app.
 +        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
 +        XCODE_ATTRIBUTE_INSTALL_PATH "$(LOCAL_APPS_DIR)"
 +        XCODE_ATTRIBUTE_SKIP_INSTALL "NO"
-+    )
+     )
  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
  	set_target_properties(${PROJECT_NAME} PROPERTIES
- 	OUTPUT_NAME "2s2h.elf"
-@@ -350,7 +481,7 @@
+@@ -350,7 +514,7 @@
  endif()
  
  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
@@ -177,7 +210,7 @@ $<TARGET_FILE_DIR> (mm/CMakeLists.txt:501-510), which lands inside the .app.
          target_compile_options(${PROJECT_NAME} PRIVATE
              -Wall -Wextra -Wno-error
              -Wno-return-type
-@@ -593,6 +724,52 @@
+@@ -593,6 +757,52 @@
      )
      target_include_directories(${PROJECT_NAME} PRIVATE
          ${DEVKITPRO}/portlibs/wiiu/include/
@@ -254,7 +287,7 @@ $<TARGET_FILE_DIR> (mm/CMakeLists.txt:501-510), which lands inside the .app.
 +	<key>CFBundleIconName</key>
 +	<string>AppIcon</string>
 +	<key>CFBundleShortVersionString</key>
-+	<string>1.1.1</string>
++	<string>1.1.2</string>
 +	<key>CFBundleVersion</key>
 +	<string>1</string>
 +	<key>LSRequiresIPhoneOS</key>

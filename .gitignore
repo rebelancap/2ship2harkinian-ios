@@ -45,3 +45,10 @@ xcuserdata/
 # Spike build trees (rebuildable; huge FetchContent checkouts)
 /spikes/*-build/
 /spikes/*.log
+
+# 2026-10-09 device crash pull: keep only the 2ship .ips + config; the full
+# device diagnostics dump (~440 MB) and the downloaded IPAs stay local.
+/artifacts/device-crash-2026-10-09/ips/*
+!/artifacts/device-crash-2026-10-09/ips/2ship-*.ips
+/artifacts/device-crash-2026-10-09/ipa/
+/artifacts/device-crash-2026-10-09/*.ipa

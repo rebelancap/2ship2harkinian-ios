@@ -1,0 +1,162 @@
+Overlay patch 0044 (D-051; reference D-081 / Shipwright-ios 8f8e770 overlay 0062):
+TOUCH DRAG-LOOK FOR FREE LOOK + TOUCH-C RIGHT-STICK MASK.
+
+2S2H's Free Look camera (gEnhancements.Camera.FreeLook.Enable) had no touch
+input: the touch overlay has no camera control. the Ship of Harkinian port answer is
+DRAG-LOOK: a touch that lands on empty overlay space turns the free camera by
+finger distance. The shell (app/ios/SohIosShell.m) owns the gesture; this
+patch is the game side, __IOS__-gated (the desktop build is unchanged):
+
+  1. padmgr.c PadMgr_UpdateInputs, port 1 (i == 0), once per pad tick (graph.c
+     runs PadMgr_ThreadEntry once per game tick):
+     a. SohIos_TouchLookTickDrain() moves the shell's accumulated drag into
+        "this tick's delta" -- so a drag between two 20 Hz ticks is applied
+        exactly once, and every reader in the tick sees the same value.
+     b. THE TRAP THE TOUCH C-BUTTONS HAD ALREADY SPRUNG: they emit through SDL
+        RIGHTX/RIGHTY (that is how they reach the C bits), and LUS's default
+        mapping binds those SAME axes to the N64 right stick, which Free Look
+        reads as a camera rate (and first-person RightStickEnabled reads as
+        aim). So with Free Look on, every touch C press swung the camera. While
+        SohIos_TouchCMaskActive() (a touch C held, and 0.25 s after) port 1's
+        right stick is zeroed. The C BITS are untouched; physical pads never
+        raise the mask (the overlay is hidden in controller mode).
+        `cvar gSohIos.TouchCMask 0` is the A/B switch.
+
+  2. FreeLook.cpp -- THE INJECTION POINT. 2S2H has no Mouse.cpp seam (the
+     reference rode Mouse_HandleThirdPerson); Free Look reads
+     input[0].cur.right_stick_x/y directly, x10 per tick, in two places:
+     Camera_CanFreeLook's 15-unit engage threshold and Camera_FreeLook's
+     yaw/pitch step. The touch delta is folded in at exactly those reads, with
+     the Ship of Harkinian port sign convention (yaw: -stick*10 - touchX; pitch:
+     stick*10 - touchY), so 2S2H's own RightStick.CameraSensitivity.X/Y, its
+     invert options / Mirrored World and the MaxPitch/MinPitch clamp all apply
+     on top, unchanged.
+     Instruments for the console bridge's `look`: the free camera's yaw/pitch
+     and a Camera_FreeLook tick count, a rate-limited shell log line when a
+     touch delta reached the camera, and SohIos_CamYawPitch (the ACTIVE
+     camera's eye->at yaw/pitch, Free Look engaged or not -- how the sim round
+     proves a touch C press no longer swings it).
+
+Generate against a vendor tree with 0001..0043 applied and 0044 not applied.
+
+
+--- a/mm/src/code/padmgr.c
++++ b/mm/src/code/padmgr.c
+@@ -488,7 +488,25 @@
+             input->cur.stick_x = 0;
+             input->cur.stick_y = 0;
+             input->cur.err_no = pad->err_no;
++        }
++
++#ifdef __IOS__
++        /* SOH_IOS (overlay 0044, D-051): port 1, once per pad tick. (a) take
++         * this tick's touch drag-look delta (read by FreeLook.cpp); (b) touch
++         * C-buttons reach the C bits through SDL RIGHTX/RIGHTY, which LUS ALSO
++         * maps to the N64 right stick -- Free Look's camera rate. While a touch
++         * C is down (and 0.25 s after), port 1's right stick is not the
++         * player's. */
++        if (i == 0) {
++            extern void SohIos_TouchLookTickDrain(void);
++            extern int SohIos_TouchCMaskActive(void);
++            SohIos_TouchLookTickDrain();
++            if (SohIos_TouchCMaskActive()) {
++                input->cur.right_stick_x = 0;
++                input->cur.right_stick_y = 0;
++            }
+         }
++#endif
+ 
+         // If opposed directions on the D-Pad are pressed at the same time, mask both out
+         if ((input->cur.button & (BTN_DDOWN | BTN_DUP)) == (BTN_DDOWN | BTN_DUP)) {
+--- a/mm/2s2h/Enhancements/Camera/FreeLook.cpp
++++ b/mm/2s2h/Enhancements/Camera/FreeLook.cpp
+@@ -17,6 +17,17 @@
+ extern s32 sCameraInterfaceFlags;
+ }
+ 
++#ifdef __IOS__
++// SOH_IOS (overlay 0044, D-051): touch drag-look. The shell accumulates finger
++// travel (binary-angle units) on the main thread; padmgr drains it once per
++// pad tick; it is folded in below exactly where the right stick is read.
++extern "C" void SohIos_TouchLookTick(float* x, float* y);
++extern "C" void SohIos_TouchLookCameraLog(float dx, float dy, int yaw, int pitch);
++extern "C" volatile int gSohIosFreeCamX;
++extern "C" volatile int gSohIosFreeCamY;
++extern "C" volatile int gSohIosFreeCamTicks;
++#endif
++
+ // Check if bombchu remote control is active
+ extern bool IsBombchuFocused();
+ 
+@@ -99,6 +110,14 @@
+                   (CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.X", 1.0f));
+     f32 pitchDiff = sCamPlayState->state.input[0].cur.right_stick_y * 10.0f *
+                     (CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.Y", 1.0f));
++#ifdef __IOS__
++    // SOH_IOS (overlay 0044): this tick's touch drag, like a mouse delta on the
++    // reference (-stick*10 - touchX / stick*10 - touchY), then the same sensitivity.
++    f32 sohTlX = 0.0f, sohTlY = 0.0f;
++    SohIos_TouchLookTick(&sohTlX, &sohTlY);
++    yawDiff -= sohTlX * CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.X", 1.0f);
++    pitchDiff -= sohTlY * CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.Y", 1.0f);
++#endif
+ 
+     yaw += yawDiff * GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_X);
+     pitch += pitchDiff * -GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_Y);
+@@ -112,6 +131,15 @@
+     if (pitch < minPitch) {
+         pitch = minPitch;
+     }
++#ifdef __IOS__
++    // SOH_IOS (overlay 0044): drag-look instruments (console `look`).
++    gSohIosFreeCamX = (s16)(s32)yaw;
++    gSohIosFreeCamY = (s16)(s32)pitch;
++    gSohIosFreeCamTicks++;
++    if (sohTlX != 0.0f || sohTlY != 0.0f) {
++        SohIos_TouchLookCameraLog(sohTlX, sohTlY, (s16)(s32)yaw, (s16)(s32)pitch);
++    }
++#endif
+ 
+     f32 distTarget = CVarGetInteger("gEnhancements.Camera.FreeLook.MaxCameraDistance", roData->unk_04);
+     f32 transitionSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.TransitionSpeed", 25);
+@@ -153,6 +181,15 @@
+ bool Camera_CanFreeLook(Camera* camera) {
+     f32 camX = sCamPlayState->state.input[0].cur.right_stick_x * 10.0f;
+     f32 camY = sCamPlayState->state.input[0].cur.right_stick_y * 10.0f;
++#ifdef __IOS__
++    {
++        // SOH_IOS (overlay 0044): a touch drag engages Free Look like the stick.
++        f32 sohTlX = 0.0f, sohTlY = 0.0f;
++        SohIos_TouchLookTick(&sohTlX, &sohTlY);
++        camX += sohTlX;
++        camY -= sohTlY;
++    }
++#endif
+     if (!sCanFreeLook && (fabsf(camX) >= 15.0f || fabsf(camY) >= 15.0f)) {
+         sCanFreeLook = true;
+     }
+@@ -172,6 +209,24 @@
+     return sCanFreeLook;
+ }
+ 
++#ifdef __IOS__
++// SOH_IOS (overlay 0044): console `look` -- the ACTIVE camera's eye->at
++// yaw/pitch, Free Look engaged or not. Read-only; 0 outside gameplay.
++extern "C" int SohIos_CamYawPitch(int* yaw, int* pitch) {
++    if (gPlayState == nullptr) {
++        return 0;
++    }
++    Camera* cam = gPlayState->cameraPtrs[gPlayState->activeCamId];
++    if (cam == nullptr) {
++        return 0;
++    }
++    VecGeo g = OLib_Vec3fDiffToVecGeo(&cam->at, &cam->eye);
++    *yaw = g.yaw;
++    *pitch = g.pitch;
++    return 1;
++}
++#endif
++
+ void RegisterCameraFreeLook() {
+     COND_VB_SHOULD(VB_USE_CUSTOM_CAMERA, CVarGetInteger("gEnhancements.Camera.FreeLook.Enable", 0), {
+         Camera* camera = va_arg(args, Camera*);

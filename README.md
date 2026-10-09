@@ -89,6 +89,10 @@ switch. Turn it off to compare against vanilla.
   with C-buttons, and a **layout customizer** — drag any button, scale 70–140%,
   left-handed mirror, opacity, haptics, and **per-button hide/show** so you can drop the
   buttons you never use
+- **Drag-to-look** with Free Look: swipe empty screen space to move the camera
+  (sensitivity slider), and **gyro aiming** (off by default) — tilt the phone to aim the
+  bow, hookshot and first-person view
+- **Always Show Menu Button** option to keep the menu button on screen during gameplay
 - **60 / 120 Hz** (ProMotion) and a supersampling slider for extra sharpness
 - Texture packs and other `.o2r` mods via drag-and-drop in Files
 - On-screen fps + thermal readout for tuning

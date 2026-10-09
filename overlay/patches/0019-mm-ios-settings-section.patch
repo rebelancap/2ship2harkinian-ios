@@ -1,39 +1,172 @@
-Overlay patch 0019 (reference 0017 analog): "iOS" section in 2S2H's Settings
-sidebar — Z-toggle checkbox (gSohIos.ZToggle) and menu-scale slider
-(gSohIos.MenuScale, consumed at Gui init by overlay 0017). Uses BenMenu's
-declarative API; deltas vs reference: no RaceDisable/ShowButtons in 2S2H's
-UIWidgets. Anchored between the Controls and Overlay sections.
-__IOS__-gated; desktop build unchanged.
+Overlay patch 0019 (rev4, reference 0017 parity + SSAA): full "iOS" Settings
+section — Touch Controls (Double-Tap Z, Haptics, Opacity, Left-Handed,
+Stick Response, Always Show Menu Button [rev4, D-054], Touch Camera
+Sensitivity / Gyro Aiming / Gyro Sensitivity [rev4, iPhone only, D-051/D-052],
+Customize Layout), Display (Max Frame Rate cap,
+Supersampling slider [iOS] / truth line [visionOS] — overlay 0041 companion,
+Performance HUD), Menu (LIVE Menu Scale via ScaleImGui, overlay 0017),
+Advanced (Remote Console, port 8766; only in SOH_REMOTE_CONSOLE builds,
+D-040/D-043). 2S2H UIWidgets deltas: no
+RaceDisable/ShowButtons; ComboMap takes &static-unordered_map. __IOS__-gated;
+desktop build unchanged.
 
 --- a/mm/2s2h/BenGui/BenMenu.cpp
 +++ b/mm/2s2h/BenGui/BenMenu.cpp
-@@ -648,6 +648,31 @@
+@@ -648,6 +648,159 @@
          .WindowName("2S2H Input Editor")
          .Options(ButtonOptions().Tooltip("Enables the separate Bindings Window.").Size(Sizes::Inline));
  
 +#ifdef __IOS__
-+    // SOH_IOS (overlay 0019): phone-specific settings. The touch overlay
-+    // itself lives in the app shell (SohIosShell.m); these CVars are its
-+    // knobs. Menu scale is consumed at Gui init (overlay 0017).
++    // SOH_IOS (overlay 0019 rev3, reference 0017 parity): phone settings,
++    // organized Touch Controls -> Display -> Menu -> Advanced. The touch
++    // overlay lives in the app shell (SohIosShell.m); these CVars are its
++    // knobs (consumed live by the shell's 0.25 s poll unless noted).
++    // 2S2H UIWidgets deltas vs reference: no RaceDisable/ShowButtons;
++    // ComboMap takes a pointer to a static unordered_map.
 +    path.sidebarName = "iOS";
 +    AddSidebarEntry("Settings", "iOS", 1);
++
 +    AddWidget(path, "Touch Controls", WIDGET_SEPARATOR_TEXT);
-+    AddWidget(path, "Z Button is a Toggle", WIDGET_CVAR_CHECKBOX)
-+        .CVar("gSohIos.ZToggle")
++    AddWidget(path, "Double-Tap Z to Lock", WIDGET_CVAR_CHECKBOX)
++        .CVar("gSohIos.ZDoubleTap")
 +        .Options(CheckboxOptions()
-+                     .Tooltip("On: tapping the on-screen Z locks Z-targeting until tapped again (the button lights "
-+                              "up while held). Off: Z is held only while your finger is on it. Physical controllers "
-+                              "are unaffected.")
++                     .Tooltip("The on-screen Z is held while your finger is on it. With this on, double-tapping Z "
++                              "LOCKS it held (button lights up) until you tap it again. Physical controllers are "
++                              "unaffected.")
 +                     .DefaultValue(true));
++    static std::unordered_map<int32_t, const char*> sohIosHapticsOptions = { { 0, "Off" },
++                                                                             { 1, "Light" },
++                                                                             { 2, "Strong" } };
++    AddWidget(path, "Haptic Feedback", WIDGET_CVAR_COMBOBOX)
++        .CVar("gSohIos.Haptics")
++        .Options(ComboboxOptions()
++                     .ComboMap(&sohIosHapticsOptions)
++                     .Tooltip("Vibration when touch buttons are pressed.")
++                     .DefaultIndex(1));
++    AddWidget(path, "Touch Control Opacity", WIDGET_CVAR_SLIDER_FLOAT)
++        .CVar("gSohIos.TouchOpacity")
++        .Options(FloatSliderOptions()
++                     .Tooltip("How visible the on-screen controls are during play.")
++                     .IsPercentage()
++                     .Min(0.3f)
++                     .Max(1.0f)
++                     .DefaultValue(1.0f));
++    AddWidget(path, "Left-Handed Layout", WIDGET_CVAR_CHECKBOX)
++        .CVar("gSohIos.LeftyFlip")
++        .Options(CheckboxOptions()
++                     .Tooltip("Mirrors all touch controls left<->right (custom layouts mirror too).")
++                     .DefaultValue(false));
++    static std::unordered_map<int32_t, const char*> sohIosCurveOptions = { { 0, "Linear" }, { 1, "Precise (Expo)" } };
++    AddWidget(path, "Stick Response", WIDGET_CVAR_COMBOBOX)
++        .CVar("gSohIos.StickCurve")
++        .Options(ComboboxOptions()
++                     .ComboMap(&sohIosCurveOptions)
++                     .Tooltip("Linear: deflection maps 1:1. Precise: finer control near the center, same maximum.")
++                     .DefaultIndex(0));
++    // rev4 D-054 (reference D-083): keep the menu button on screen during
++    // gameplay too (the shell's menuButtonVisible reads this live).
++    AddWidget(path, "Always Show Menu Button", WIDGET_CVAR_CHECKBOX)
++        .CVar("gSohIos.MenuAlwaysVisible")
++        .Options(CheckboxOptions()
++                     .Tooltip("Keep the menu button on screen during gameplay instead of only at the title "
++                              "screen and pause menu.")
++                     .DefaultValue(false));
++#if !TARGET_OS_VISION
++    // rev4 D-051 (overlay 0044; reference D-081): touch drag-look for 2S2H's
++    // Free Look camera. The shell scales finger travel by this; 1.0 = one
++    // screen width -> 180 deg.
++    AddWidget(path, "Touch Camera Sensitivity: %.2f", WIDGET_CVAR_SLIDER_FLOAT)
++        .CVar("gSohIos.TouchLookSens")
++        .Options(FloatSliderOptions()
++                     .Tooltip("With Free Look on (Enhancements > Camera > Free Look), drag on empty screen space to "
++                              "turn the camera. 1.00 = one screen width turns the camera 180 degrees. Free Look's "
++                              "own sensitivity and invert options apply on top.")
++                     .ShowAdjustmentButtons(true)
++                     .Min(0.25f)
++                     .Max(3.0f)
++                     .Format("%.2f")
++                     .DefaultValue(1.0f));
++    // rev4 D-052 (overlay 0045; reference D-082): CoreMotion drives 2S2H's
++    // first-person gyro aim. While on, the shell also keeps the game's own
++    // Free Look > First Person "Gyro Aiming" switch on.
++    AddWidget(path, "Gyro Aiming", WIDGET_CVAR_CHECKBOX)
++        .CVar("gSohIos.Gyro")
++        .Options(CheckboxOptions()
++                     .Tooltip("Tilt the phone to aim the bow, hookshot and first-person view. Does not move the "
++                              "free camera.")
++                     .DefaultValue(false));
++    AddWidget(path, "Gyro Sensitivity: %.2fx", WIDGET_CVAR_SLIDER_FLOAT)
++        .CVar("gSohIos.GyroSens")
++        .Options(FloatSliderOptions()
++                     .Tooltip("How far the aim moves for a given tilt. 1.00 matches a gyro controller on desktop "
++                              "2S2H.")
++                     .ShowAdjustmentButtons(true)
++                     .Min(0.25f)
++                     .Max(4.0f)
++                     .Format("%.2f")
++                     .DefaultValue(1.0f));
++#endif
++    AddWidget(path, "Customize Layout...", WIDGET_BUTTON)
++        .Callback([](WidgetInfo& info) { CVarSetInteger("gSohIos.EditLayout", 1); })
++        .Options(ButtonOptions().Tooltip(
++            "Rearrange the on-screen controls: drag any button (and the stick's spawn area), scale them with the "
++            "slider, then save with the checkmark. Reset restores the default layout."));
++
++    AddWidget(path, "Display", WIDGET_SEPARATOR_TEXT);
++    static std::unordered_map<int32_t, const char*> sohIosFpsOptions = { { 0, "60 fps" }, { 1, "120 fps" } };
++    AddWidget(path, "Max Frame Rate", WIDGET_CVAR_COMBOBOX)
++        .CVar("gSohIos.MaxFps")
++        .Options(ComboboxOptions()
++                     .ComboMap(&sohIosFpsOptions)
++                     .Tooltip("Cap for Match Refresh Rate. 60 fps saves battery; 120 uses the full ProMotion panel.")
++                     .DefaultIndex(1));
++#if TARGET_OS_VISION
++    // SOH_IOS (overlay 0041 companion): VP renders the 2D window at native 4K,
++    // which already exceeds the panel's angular resolution of the window — no
++    // slider (above 1.0 is GPU spend for no visible gain, playbook §1.4a).
++    AddWidget(path, "Supersampling: automatic", WIDGET_SEPARATOR_TEXT);
++#else
++    // SOH_IOS (overlay 0041 companion): true supersampling. The engine now
++    // renders at (native drawable px x this), downsampled to the screen — 1.0
++    // is native (the sub-native upscale is fixed), 2.0 is 4x the pixels.
++    AddWidget(path, "Supersampling (SSAA): %.2fx", WIDGET_CVAR_SLIDER_FLOAT)
++        .CVar("gSohIos.Supersample")
++        .Options(FloatSliderOptions()
++                     .Tooltip("Renders above native resolution and downsamples for smoother, less-grainy visuals "
++                              "(especially with HD texture packs). 1.0 = native; 2.0 = 4x the pixels. Raise "
++                              "gradually and watch the Performance HUD for drops or warmth.")
++                     .ShowAdjustmentButtons(true)
++                     .Min(1.0f)
++                     .Max(2.0f)
++                     .Format("%.2f")
++                     .DefaultValue(1.0f));
++#endif
++    AddWidget(path, "Performance HUD", WIDGET_CVAR_CHECKBOX)
++        .CVar("gSohIos.PerfHud")
++        .Options(CheckboxOptions()
++                     .Tooltip("Small fps + thermal readout in the top-right corner.")
++                     .DefaultValue(false));
++
 +    AddWidget(path, "Menu", WIDGET_SEPARATOR_TEXT);
 +    AddWidget(path, "Menu Scale", WIDGET_CVAR_SLIDER_FLOAT)
 +        .CVar("gSohIos.MenuScale")
++        .Callback([](WidgetInfo& info) { OTRGlobals::Instance->ScaleImGui(); })
 +        .Options(FloatSliderOptions()
-+                     .Tooltip("Size of this menu and its text. Takes effect after relaunching the app.")
++                     .Tooltip("Size of this menu and its text. Applies immediately.")
 +                     .IsPercentage()
 +                     .Min(0.6f)
 +                     .Max(1.2f)
 +                     .DefaultValue(0.85f));
++
++#if SOH_REMOTE_CONSOLE
++    AddWidget(path, "Advanced", WIDGET_SEPARATOR_TEXT);
++    AddWidget(path, "Remote Console", WIDGET_CVAR_CHECKBOX)
++        .CVar("gSohIos.RemoteConsole")
++        .Options(CheckboxOptions()
++                     .Tooltip("Opens a TCP debug console on port 8766 while the app runs, reachable from your "
++                              "local network. Leave off unless troubleshooting.")
++                     .DefaultValue(false));
++#endif
 +#endif
 +
      path.sidebarName = "Overlay";
